@@ -1,0 +1,44 @@
+* installation
+conda create -n pulse2 -c pytorch -c conda-forge pytorch=1.5.0 dlib pillow jupyter requests scipy torchvision matplotlib
+# had to do this because the default pytorch requires a different cuda version
+conda install -c pytorch pytorch=1.5.0=py3.8_cuda10.1.243_cudnn7.6.3_0
+* TODOs
+- [X] chang the drive downloading to locally downloaded files
+- [X] iterative generation using perpendicular init
+- [X] perpendicular projection optimizer
+- [X] try iterative w/ latents only (not noise)
+- [X] make grid of samples
+  - make grid utility
+- [X] make plan of what to run
+  - runs w/ 25 samples ?
+  - configurations:
+    - vanilla_pulse
+    - iterative_negation_initialization
+    - iterative_perpendicular_initialization
+    - perpendicular_projection_optimizer
+    - perpendicular_projection_optimizer_only_latents
+- [X] try psi = 0.7
+- [X] farthest_sampled_initailization
+- [X] tried eps = 0.0
+- [X] use D to make realistic samples
+  - hypothesis: higher number = less real
+  - [X] use aux loss
+    - "100*L2+0.05*GEOCROSS"
+    - try: 0.05 for DISC loss
+      - seemed too high
+    - try: 0.02
+      - still way too high
+    - try: 0.01
+      - still way too high
+      - looks like adversarial examples for D
+    - 0.003
+  - [X] rejection sampling
+- [X] code cleanup
+  - add psi=0.7 option
+  - add "100*L2+0.05*GEOCROSS+0.01*DISC"
+  - flag for rejection sampling
+    - filter_results_with_D
+  - flag for sortby_D
+- [X] run all configs on oprah
+- [X] package up code nicely (so that others can use)
+- [ ] make animation of interpolation of samples
