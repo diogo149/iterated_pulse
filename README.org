@@ -42,3 +42,33 @@ conda install -c pytorch pytorch=1.5.0=py3.8_cuda10.1.243_cudnn7.6.3_0
 - [X] run all configs on oprah
 - [X] package up code nicely (so that others can use)
 - [X] make animation of interpolation of samples
+* for making combined images
+#+BEGIN_SRC python
+import PIL
+import numpy as np
+import os
+
+dir_path = "."
+pngs = [f for f in os.listdir(dir_path) if f.endswith(".png")]
+v0_suffix = "__vanilla_pulse__grid.png"
+v1_suffix = "__perpendicular_projection_optimizer_psi0.7_discloss__grid.png"
+has_v0 = [f[:-len(v0_suffix)] for f in pngs if f.endswith(v0_suffix)]
+has_v1 = [f[:-len(v1_suffix)] for f in pngs if f.endswith(v1_suffix)]
+
+
+for prefix in set(has_v0).intersection(has_v1):
+    img_v0 = prefix + v0_suffix
+    img_v1 = prefix + v1_suffix
+    res = prefix + "_combined.png"
+    if not os.path.exists(res):
+        i0 = PIL.Image.open(img_v0)
+        i1 = PIL.Image.open(img_v1)
+        assert i0.size == i1.size
+        i0 = i0.resize([s // 4 for s in i0.size], resample=PIL.Image.LANCZOS)
+        i1 = i1.resize([s // 4 for s in i1.size], resample=PIL.Image.LANCZOS)
+        i0 = np.array(i0)
+        i1 = np.array(i1)
+        border = np.zeros((i0.shape[0], 5, 3), dtype=np.uint8)
+        new_i = np.concatenate(([i0, border, i1]), axis=1)
+        PIL.Image.fromarray(new_i).save(res)
+#+END_SRC
