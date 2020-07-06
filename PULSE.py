@@ -249,3 +249,72 @@ class PULSE(torch.nn.Module):
         #     )
         # else:
         #     print("Could not find a face that downscales correctly within epsilon")
+
+    def var_list_to_latent_and_noise(
+        self,
+        var_list,
+        noise_type,
+        num_trainable_noise_layers,
+        bad_noise_layers,
+        seed=0,
+        **kwargs,
+    ):
+        with torch.no_grad():
+            if seed:
+                torch.manual_seed(seed)
+                torch.cuda.manual_seed(seed)
+                torch.backends.cudnn.deterministic = True
+
+            latent = var_list[0].clone()
+            batch_size = latent.shape[0]
+
+            noise = []  # stores all of the noise tensors
+            noise_vars = []  # stores the noise tensors that we want to optimize on
+
+            for i in range(18):
+                # dimension of the ith noise tensor
+                res = (batch_size, 1, 2 ** (i // 2 + 2), 2 ** (i // 2 + 2))
+
+                if noise_type == "zero" or i in [
+                    int(layer) for layer in bad_noise_layers.split(".")
+                ]:
+                    new_noise = torch.zeros(res, dtype=torch.float, device="cuda")
+                    new_noise.requires_grad = False
+                elif noise_type == "fixed":
+                    new_noise = torch.randn(res, dtype=torch.float, device="cuda")
+                    new_noise.requires_grad = False
+                elif noise_type == "trainable":
+                    new_noise = torch.randn(res, dtype=torch.float, device="cuda")
+                    new_noise.requires_grad = False
+                    if i < num_trainable_noise_layers:
+                        noise_vars.append(new_noise)
+                else:
+                    raise Exception("unknown noise type")
+
+                noise.append(new_noise)
+
+            assert len(var_list) - 1 == len(noise_vars)
+            for noise_input, noise_var in zip(var_list[1:], noise_vars):
+                assert noise_input.shape == noise_var.shape
+                noise_var.copy_(noise_input.clone())
+
+            return latent, noise
+
+    def synthesize(self, latent, noise, tile_latent, **kwargs):
+        with torch.no_grad():
+            # Duplicate latent in case tile_latent = True
+            if tile_latent:
+                latent_in = latent.expand(-1, 18, -1)
+            else:
+                latent_in = latent
+
+            # Apply learned linear mapping to match latent distribution to that of the mapping network
+            latent_in = self.lrelu(
+                latent_in * self.gaussian_fit["std"] + self.gaussian_fit["mean"]
+            )
+
+            # Normalize image to [0,1] instead of [-1,1]
+            gen_im = (self.synthesis(latent_in, noise) + 1) / 2
+            gen_im = gen_im.cpu().detach().clamp(0, 1)
+
+            return gen_im
