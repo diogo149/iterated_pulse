@@ -41,4 +41,4 @@ conda install -c pytorch pytorch=1.5.0=py3.8_cuda10.1.243_cudnn7.6.3_0
   - flag for sortby_D
 - [X] run all configs on oprah
 - [X] package up code nicely (so that others can use)
-- [ ] make animation of interpolation of samples
+- [X] make animation of interpolation of samples
