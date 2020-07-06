@@ -1,3 +1,11 @@
+# Iterated PULSE
+
+This is a fork of [PULSE][https://github.com/adamian98/pulse] where we try to make improvements to the setting of sampling multiple images for a single low resolution image. The relevant code is in [this notebook][https://github.com/diogo149/iterated_pulse/blob/master/iterated_pulse.ipynb], though other changes have been made to the codebase as well.
+
+Below is the original README:
+
+---
+
 # PULSE: Self-Supervised Photo Upsampling via Latent Space Exploration of Generative Models
 Code accompanying CVPR'20 paper of the same title. Paper link: https://arxiv.org/pdf/2003.03808.pdf
 
