@@ -24,3 +24,22 @@ class SphericalOptimizer(Optimizer):
             param.mul_(self.radii[param])
 
         return loss
+
+
+class StepPostProcessOptimizer(Optimizer):
+    def __init__(self, optimizer, params, step_postprocess, **kwargs):
+        self.opt = optimizer(params, **kwargs)
+        self.params = params
+        self.step_postprocess = step_postprocess
+        with torch.no_grad():
+            self.radii = {param: (param.pow(2).sum(tuple(range(2,param.ndim)),keepdim=True)+1e-9).sqrt() for param in params}
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        loss = self.opt.step(closure)
+        self.step_postprocess(self.params)
+        for param in self.params:
+            param.data.div_((param.pow(2).sum(tuple(range(2,param.ndim)),keepdim=True)+1e-9).sqrt())
+            param.mul_(self.radii[param])
+                                          
+        return loss

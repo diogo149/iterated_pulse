@@ -38,6 +38,7 @@ class MyLinear(nn.Module):
         return F.linear(x, self.weight * self.w_mul, bias)
 
 
+'''
 class MyConv2d(nn.Module):
     """Conv layer with equalized learning rate and custom learning rate multiplier."""
 
@@ -98,6 +99,82 @@ class MyConv2d(nn.Module):
         if bias is not None:
             x = x + bias.view(1, -1, 1, 1)
         return x
+'''
+
+
+class MyConv2d(nn.Module):
+    """Conv layer with equalized learning rate and custom learning rate multiplier."""
+    def __init__(self, input_channels, output_channels, kernel_size, stride=1, gain=2**(0.5), use_wscale=False, lrmul=1, bias=True,
+                intermediate=None, upscale=False, downscale=False):
+        super().__init__()
+        if upscale:
+            self.upscale = Upscale2d()
+        else:
+            self.upscale = None
+        if downscale:
+            self.downscale = Downscale2d()
+        else:
+            self.downscale = None
+        he_std = gain * (input_channels * kernel_size ** 2) ** (-0.5) # He init
+        self.kernel_size = kernel_size
+        if use_wscale:
+            init_std = 1.0 / lrmul
+            self.w_mul = he_std * lrmul
+        else:
+            init_std = he_std / lrmul
+            self.w_mul = lrmul
+        self.weight = torch.nn.Parameter(torch.randn(output_channels, input_channels, kernel_size, kernel_size) * init_std)
+        if bias:
+            self.bias = torch.nn.Parameter(torch.zeros(output_channels))
+            self.b_mul = lrmul
+        else:
+            self.bias = None
+        self.intermediate = intermediate
+
+    def forward(self, x):
+        bias = self.bias
+        if bias is not None:
+            bias = bias * self.b_mul
+        
+        have_convolution = False
+        if self.upscale is not None and min(x.shape[2:]) * 2 >= 128:
+            # this is the fused upscale + conv from StyleGAN, sadly this seems incompatible with the non-fused way
+            # this really needs to be cleaned up and go into the conv...
+            w = self.weight * self.w_mul
+            w = w.permute(1, 0, 2, 3)
+            # probably applying a conv on w would be more efficient. also this quadruples the weight (average)?!
+            w = F.pad(w, (1,1,1,1))
+            w = w[:, :, 1:, 1:]+ w[:, :, :-1, 1:] + w[:, :, 1:, :-1] + w[:, :, :-1, :-1]
+            x = F.conv_transpose2d(x, w, stride=2, padding=(w.size(-1)-1)//2)
+            have_convolution = True
+        elif self.upscale is not None:
+            x = self.upscale(x)
+        
+        downscale = self.downscale
+        intermediate = self.intermediate
+        if downscale is not None and min(x.shape[2:]) >= 128:
+            w = self.weight * self.w_mul
+            w = F.pad(w, (1,1,1,1))
+            # in contrast to upscale, this is a mean...
+            w = (w[:, :, 1:, 1:]+ w[:, :, :-1, 1:] + w[:, :, 1:, :-1] + w[:, :, :-1, :-1])*0.25 # avg_pool?
+            x = F.conv2d(x, w, stride=2, padding=(w.size(-1)-1)//2)
+            have_convolution = True
+            downscale = None
+        elif downscale is not None:
+            assert intermediate is None
+            intermediate = downscale
+            
+        if not have_convolution and intermediate is None:
+            return F.conv2d(x, self.weight * self.w_mul, bias, padding=self.kernel_size//2)
+        elif not have_convolution:
+            x = F.conv2d(x, self.weight * self.w_mul, None, padding=self.kernel_size//2)
+
+        if intermediate is not None:
+            x = intermediate(x)
+
+        if bias is not None:
+            x = x + bias.view(1, -1, 1, 1)
+        return x
 
 
 class NoiseLayer(nn.Module):
@@ -148,7 +225,7 @@ class PixelNormLayer(nn.Module):
 class BlurLayer(nn.Module):
     def __init__(self, kernel=[1, 2, 1], normalize=True, flip=False, stride=1):
         super(BlurLayer, self).__init__()
-        kernel = [1, 2, 1]
+        # kernel = [1, 2, 1]
         kernel = torch.tensor(kernel, dtype=torch.float32)
         kernel = kernel[:, None] * kernel[None, :]
         kernel = kernel[None, None]
@@ -408,3 +485,115 @@ class G_synthesis(nn.Module):
                 x = m(x, dlatents_in[:, 2*i:2*i+2], noise_in[2*i:2*i+2])
         rgb = self.torgb(x)
         return rgb
+
+class StddevLayer(nn.Module):
+    def __init__(self, group_size=4, num_new_features=1):
+        super().__init__()
+        self.group_size = 4
+        self.num_new_features = 1
+    def forward(self, x):
+        b, c, h, w = x.shape
+        group_size = min(self.group_size, b)
+        y = x.reshape([group_size, -1, self.num_new_features,
+                        c // self.num_new_features, h, w])
+        y = y - y.mean(0, keepdim=True)
+        y = (y**2).mean(0, keepdim=True)
+        y = (y + 1e-8)**0.5
+        y = y.mean([3, 4, 5], keepdim=True).squeeze(3) # don't keep the meaned-out channels
+        y = y.expand(group_size, -1, -1, h, w).clone().reshape(b, self.num_new_features, h, w)
+        z = torch.cat([x, y], dim=1)
+        return z
+
+class Downscale2d(nn.Module):
+    def __init__(self, factor=2, gain=1):
+        super().__init__()
+        assert isinstance(factor, int) and factor >= 1
+        self.factor = factor
+        self.gain = gain
+        if factor == 2:
+            f = [np.sqrt(gain) / factor] * factor
+            self.blur = BlurLayer(kernel=f, normalize=False, stride=factor)
+        else:
+            self.blur = None
+
+    def forward(self, x):
+        assert x.dim()==4
+        # 2x2, float32 => downscale using _blur2d().
+        if self.blur is not None and x.dtype == torch.float32:
+            return self.blur(x)
+
+        # Apply gain.
+        if self.gain != 1:
+            x = x * self.gain
+
+        # No-op => early exit.
+        if self.factor == 1:
+            return x
+
+        # Large factor => downscale using tf.nn.avg_pool().
+        # NOTE: Requires tf_config['graph_options.place_pruned_graph']=True to work.
+        return F.avg_pool2d(x, self.factor)
+
+class DiscriminatorBlock(nn.Sequential):
+    def __init__(self, in_channels, out_channels, gain, use_wscale, activation_layer):
+        super().__init__(OrderedDict([
+            ('conv0', MyConv2d(in_channels, in_channels, 3, gain=gain, use_wscale=use_wscale)), # out channels nf(res-1)
+            ('act0', activation_layer),
+            ('blur', BlurLayer()),
+            ('conv1_down', MyConv2d(in_channels, out_channels, 3, gain=gain, use_wscale=use_wscale, downscale=True)),
+            ('act1', activation_layer)]))
+
+class View(nn.Module):
+    def __init__(self, *shape):
+        super().__init__()
+        self.shape = shape
+    def forward(self, x):
+        return x.view(x.size(0), *self.shape)
+
+class DiscriminatorTop(nn.Sequential):
+    def __init__(self, mbstd_group_size, mbstd_num_features, in_channels, intermediate_channels, gain, use_wscale, activation_layer, resolution=4, in_channels2=None, output_features=1, last_gain=1):
+        layers = []
+        if mbstd_group_size > 1:
+            layers.append(('stddev_layer', StddevLayer(mbstd_group_size, mbstd_num_features)))
+        if in_channels2 is None:
+            in_channels2 = in_channels
+        layers.append(('conv', MyConv2d(in_channels + mbstd_num_features, in_channels2, 3, gain=gain, use_wscale=use_wscale)))
+        layers.append(('act0', activation_layer))
+        layers.append(('view', View(-1)))
+        layers.append(('dense0', MyLinear(in_channels2*resolution*resolution, intermediate_channels, gain=gain, use_wscale=use_wscale)))
+        layers.append(('act1', activation_layer))
+        layers.append(('dense1', MyLinear(intermediate_channels, output_features, gain=last_gain, use_wscale=use_wscale)))
+        super().__init__(OrderedDict(layers))
+
+class D_basic(nn.Sequential):
+    
+    def __init__(self,
+        #images_in,                          # First input: Images [minibatch, channel, height, width].
+        #labels_in,                          # Second input: Labels [minibatch, label_size].
+        num_channels        = 3,            # Number of input color channels. Overridden based on dataset.
+        resolution          = 1024,           # Input resolution. Overridden based on dataset.
+        fmap_base           = 8192,         # Overall multiplier for the number of feature maps.
+        fmap_decay          = 1.0,          # log2 feature map reduction when doubling the resolution.
+        fmap_max            = 512,          # Maximum number of feature maps in any layer.
+        nonlinearity        = 'lrelu',      # Activation function: 'relu', 'lrelu',
+        use_wscale          = True,         # Enable equalized learning rate?
+        mbstd_group_size    = 4,            # Group size for the minibatch standard deviation layer, 0 = disable.
+        mbstd_num_features  = 1,            # Number of features for the minibatch standard deviation layer.
+        #blur_filter         = [1,2,1],      # Low-pass filter to apply when resampling activations. None = no filtering.
+                ):
+        self.mbstd_group_size = 4
+        self.mbstd_num_features = 1
+        resolution_log2 = int(np.log2(resolution))
+        assert resolution == 2**resolution_log2 and resolution >= 4
+        def nf(stage):
+            return min(int(fmap_base / (2.0 ** (stage * fmap_decay))), fmap_max)
+
+        act, gain = {'relu': (torch.relu, np.sqrt(2)),
+                     'lrelu': (nn.LeakyReLU(negative_slope=0.2), np.sqrt(2))}[nonlinearity]
+        self.gain = gain
+        self.use_wscale = use_wscale
+        super().__init__(OrderedDict([
+            ('fromrgb', MyConv2d(num_channels, nf(resolution_log2-1), 1, gain=gain, use_wscale=use_wscale)),
+            ('act', act)]
+            +[('{s}x{s}'.format(s=2**res), DiscriminatorBlock(nf(res-1), nf(res-2), gain=gain, use_wscale=use_wscale, activation_layer=act)) for res in range(resolution_log2, 2, -1)]
+            +[('4x4', DiscriminatorTop(mbstd_group_size, mbstd_num_features, nf(2), nf(2), gain=gain, use_wscale=use_wscale, activation_layer=act))]))
