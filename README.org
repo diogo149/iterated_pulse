@@ -78,7 +78,8 @@ import PIL
 import numpy as np
 import os
 
-configs = [f[len("oprah_0__"):-len("__grid.png")] for f in os.listdir(".")]
+configs = [f[len("oprah_0__"):-len("__grid.png")] for f in os.listdir(".")
+           if f.endswith("__grid.png")]
 
 for config in configs:
     img_v0 = "oprah_0__" + "vanilla_pulse" + "__grid.png"
@@ -97,5 +98,4 @@ for config in configs:
             border = np.zeros((i0.shape[0], 5, 3), dtype=np.uint8)
             new_i = np.concatenate(([i0, border, i1]), axis=1)
             PIL.Image.fromarray(new_i).save(res)
-
 #+END_SRC
