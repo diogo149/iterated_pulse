@@ -42,6 +42,8 @@ conda install -c pytorch pytorch=1.5.0=py3.8_cuda10.1.243_cudnn7.6.3_0
 - [X] run all configs on oprah
 - [X] package up code nicely (so that others can use)
 - [X] make animation of interpolation of samples
+- [X] try min pool
+  - D = lambda x: -F.max_pool2d(-x, factor)
 * for making combined images
 #+BEGIN_SRC python
 import PIL
@@ -98,4 +100,122 @@ for config in configs:
             border = np.zeros((i0.shape[0], 5, 3), dtype=np.uint8)
             new_i = np.concatenate(([i0, border, i1]), axis=1)
             PIL.Image.fromarray(new_i).save(res)
+#+END_SRC
+* snippet for minpool-ed faces
+#+BEGIN_SRC python
+%%time
+
+unaligned_path = "unaligned_faces/"
+aligned_faces_size = 32
+f = "shape_predictor_68_face_landmarks.dat"
+predictor = dlib.shape_predictor(f)
+
+for im in Path(unaligned_path).glob("*.*"):
+    print(im)
+    faces = align_face(str(im), predictor)
+
+    for i, face in enumerate(faces):
+        target_path = Path("aligned_faces_minpool") / (im.stem + f"_{i}.png")
+        if not os.path.exists(target_path):
+            print(face._size)
+            if aligned_faces_size is not None:
+                factor = 1024 // aligned_faces_size
+                assert aligned_faces_size * factor == 1024
+                D = lambda x: -F.max_pool2d(-x, factor)
+                face_tensor = torchvision.transforms.ToTensor()(face).unsqueeze(0).cuda()
+                face_tensor_lr = D(face_tensor)[0].cpu().detach().clamp(0, 1)
+                face = torchvision.transforms.ToPILImage()(face_tensor_lr)
+
+            face.save(target_path)
+#+END_SRC
+* snippet for side-by-side interpolation video
+#+BEGIN_SRC python
+%%time
+
+num_samples = 25
+grid_shape = (5, 5)
+filter_results = True
+sort_results = False
+configuration = "vanilla_pulse"
+img_name = "oprah_0"
+
+ref_im = ref_imgs[img_name]
+
+all_results = []
+for _ in range(num_samples * (2 if filter_results else 1)):
+    extra_kwargs = configuration_to_extra_kwargs(configuration, all_results)
+    new_kwargs = dict(kwargs)  # make a copy
+    new_kwargs.update(extra_kwargs)
+    for j, results in enumerate(model(ref_im=ref_im,
+                                      ,**new_kwargs)):
+        assert j == 0
+        all_results.append(results)
+
+if filter_results:
+    all_results = filter_results_with_D(all_results, num_keep=num_samples)
+if sort_results:
+    all_results = sortby_D(all_results)
+
+all_imgs = []
+
+latent_noise_pairs = [
+    model.var_list_to_latent_and_noise(res["var_list"], **new_kwargs)
+    for res in all_results
+]
+
+for idx in range(len(all_results)):
+    idx2 = (idx + 1) % len(all_results)
+    imgs = generate_interpolations(
+        latent_noise_pairs[idx],
+        latent_noise_pairs[idx2],
+        num_points=30,
+        interpolation_type="spherical",
+        ,**new_kwargs
+    )
+    all_imgs.extend(imgs)
+
+all_imgs1 = all_imgs
+
+configuration = "perpendicular_projection_optimizer_psi0.7_discloss"
+
+all_results = []
+for _ in range(num_samples * (2 if filter_results else 1)):
+    extra_kwargs = configuration_to_extra_kwargs(configuration, all_results)
+    new_kwargs = dict(kwargs)  # make a copy
+    new_kwargs.update(extra_kwargs)
+    for j, results in enumerate(model(ref_im=ref_im,
+                                      ,**new_kwargs)):
+        assert j == 0
+        all_results.append(results)
+
+if filter_results:
+    all_results = filter_results_with_D(all_results, num_keep=num_samples)
+if sort_results:
+    all_results = sortby_D(all_results)
+
+all_imgs = []
+
+latent_noise_pairs = [
+    model.var_list_to_latent_and_noise(res["var_list"], **new_kwargs)
+    for res in all_results
+]
+
+for idx in range(len(all_results)):
+    idx2 = (idx + 1) % len(all_results)
+    imgs = generate_interpolations(
+        latent_noise_pairs[idx],
+        latent_noise_pairs[idx2],
+        num_points=30,
+        interpolation_type="spherical",
+        ,**new_kwargs
+    )
+    all_imgs.extend(imgs)
+
+all_imgs2 = all_imgs
+
+all_imgs = [torch.cat([img1, img2], dim=3)
+            for img1, img2 in zip(all_imgs1, all_imgs2)]
+
+imgs_to_animation(all_imgs,
+                  f"{img_name}__{configuration}__sidebyside.mp4")
 #+END_SRC
