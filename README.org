@@ -80,6 +80,8 @@ import PIL
 import numpy as np
 import os
 
+border_size = 5
+
 configs = [f[len("oprah_0__"):-len("__grid.png")] for f in os.listdir(".")
            if f.endswith("__grid.png")]
 
@@ -97,7 +99,37 @@ for config in configs:
             i1 = i1.resize([s // 4 for s in i1.size], resample=PIL.Image.LANCZOS)
             i0 = np.array(i0)
             i1 = np.array(i1)
-            border = np.zeros((i0.shape[0], 5, 3), dtype=np.uint8)
+            border = np.zeros((i0.shape[0], border_size, 3), dtype=np.uint8)
+            new_i = np.concatenate(([i0, border, i1]), axis=1)
+            PIL.Image.fromarray(new_i).save(res)
+#+END_SRC
+* make combined w/ random noise
+#+BEGIN_SRC python
+import PIL
+import numpy as np
+import os
+
+border_size = 50
+
+configs = [f[len("oprah_0__"):-len("__grid.png")] for f in os.listdir(".")
+           if f.endswith("__grid.png")]
+
+for config in configs:
+    img_v0 = "oprah_0__" + "vanilla_pulse" + "__grid.png"
+    if config != "vanilla_pulse":
+        img_v1 = "oprah_0__" + config + "__grid.png"
+        res = "oprah_0__combined_random__" + config + ".png"
+
+        if not os.path.exists(res):
+            i0 = PIL.Image.open(img_v0)
+            i1 = PIL.Image.open(img_v1)
+            assert i0.size == i1.size
+            i0 = i0.resize([s // 4 for s in i0.size], resample=PIL.Image.LANCZOS)
+            i1 = i1.resize([s // 4 for s in i1.size], resample=PIL.Image.LANCZOS)
+            i0 = np.array(i0)
+            i1 = np.array(i1)
+            border = np.zeros((i0.shape[0], border_size, 3), dtype=np.uint8)
+            border += np.random.randint(256, size=border.shape, dtype=np.uint8)
             new_i = np.concatenate(([i0, border, i1]), axis=1)
             PIL.Image.fromarray(new_i).save(res)
 #+END_SRC

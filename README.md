@@ -2,6 +2,12 @@
 
 This is a fork of [PULSE][https://github.com/adamian98/pulse] where we try to make improvements to the setting of sampling multiple images for a single low resolution image. The relevant code is in [this notebook][https://github.com/diogo149/iterated_pulse/blob/master/iterated_pulse.ipynb], though other changes have been made to the codebase as well.
 
+Example image with vanilla PULSE on the left, our method on the right:
+
+![Comparison of PULSE and our method](/images/oprah_0__combined_random__perpendicular_projection_optimizer_psi0.7_discloss.png)
+
+We also have a [video of interpolations for both versions][https://youtu.be/euoFTahb02c].
+
 Below is the original README:
 
 ---
